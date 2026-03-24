@@ -1,0 +1,69 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: EnvironmentConfig
+type: object
+required:
+  - environment
+  - cloud
+  - databricks
+  - storage
+  - control_tables
+properties:
+  environment:
+    type: string
+    enum: [dev, test, prod]
+  cloud:
+    type: string
+    enum: [azure]
+  databricks:
+    type: object
+    required: [workspace_url, default_catalog, default_schema, checkpoint_root]
+    properties:
+      workspace_url:
+        type: string
+      job_cluster_policy:
+        type: string
+      default_catalog:
+        type: string
+      default_schema:
+        type: string
+      checkpoint_root:
+        type: string
+  storage:
+    type: object
+    required: [landing_root, bronze_root, silver_root, gold_root, audit_root]
+    properties:
+      landing_root:
+        type: string
+      bronze_root:
+        type: string
+      silver_root:
+        type: string
+      gold_root:
+        type: string
+      audit_root:
+        type: string
+  control_tables:
+    type: object
+    required: [catalog, schema, run_control_table, step_control_table, dq_results_table]
+    properties:
+      catalog:
+        type: string
+      schema:
+        type: string
+      run_control_table:
+        type: string
+      step_control_table:
+        type: string
+      dq_results_table:
+        type: string
+  secrets:
+    type: object
+    additionalProperties: true
+  runtime_defaults:
+    type: object
+    additionalProperties: true
+  feature_flags:
+    type: object
+    additionalProperties:
+      type: boolean
+additionalProperties: false

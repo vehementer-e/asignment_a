@@ -1,0 +1,34 @@
+rulepack_id: credit_validations
+version: 1
+rules:
+  - rule_id: credit_id_not_null
+    rule_type: not_null
+    params:
+      columns: [credit_id]
+    severity: fail
+
+  - rule_id: credit_id_unique
+    rule_type: uniqueness
+    params:
+      columns: [credit_id]
+    severity: fail
+
+  - rule_id: client_id_fk_not_null
+    rule_type: not_null
+    params:
+      columns: [client_id]
+    severity: fail
+
+  - rule_id: outstanding_balance_positive
+    rule_type: numeric_range
+    params:
+      column: outstanding_balance
+      min_value: 0
+    severity: fail
+
+  - rule_id: credit_status_domain
+    rule_type: accepted_values
+    params:
+      column: credit_status
+      allowed_values: [active, closed, delinquent, defaulted]
+    severity: warn

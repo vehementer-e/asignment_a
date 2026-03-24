@@ -1,0 +1,28 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: DQRule
+type: object
+required:
+  - rule_id
+  - rule_type
+  - params
+  - severity
+properties:
+  rule_id:
+    type: string
+  rule_type:
+    type: string
+    enum:
+      - not_null
+      - uniqueness
+      - accepted_values
+      - numeric_range
+      - freshness
+      - referential_integrity
+      - row_count_min
+  params:
+    type: object
+    additionalProperties: true
+  severity:
+    type: string
+    enum: [fail, warn, continue]
+additionalProperties: false

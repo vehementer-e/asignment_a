@@ -1,0 +1,31 @@
+environment: test
+cloud: azure
+databricks:
+  workspace_url: https://adb-<workspace-id>.<region>.azuredatabricks.net
+  job_cluster_policy: standard-test
+  default_catalog: etl_test
+  default_schema: risk
+  checkpoint_root: abfss://checkpoints@<storage-account>.dfs.core.windows.net/etl/test
+storage:
+  landing_root: abfss://landing@<storage-account>.dfs.core.windows.net
+  bronze_root: abfss://bronze@<storage-account>.dfs.core.windows.net
+  silver_root: abfss://silver@<storage-account>.dfs.core.windows.net
+  gold_root: abfss://gold@<storage-account>.dfs.core.windows.net
+  audit_root: abfss://audit@<storage-account>.dfs.core.windows.net
+control_tables:
+  catalog: etl_test
+  schema: control
+  run_control_table: etl_run_control
+  step_control_table: etl_step_control
+  dq_results_table: etl_dq_results
+secrets:
+  scope: kv-test
+  storage_key_secret: storage-account-key
+runtime_defaults:
+  write_mode: overwrite
+  fail_fast: true
+  log_level: INFO
+feature_flags:
+  enable_sql_templates: true
+  enable_step_lineage: true
+  enable_dq_sampling: true

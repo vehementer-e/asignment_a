@@ -1,0 +1,28 @@
+rulepack_id: client_validations
+version: 1
+rules:
+  - rule_id: client_id_not_null
+    rule_type: not_null
+    params:
+      columns: [client_id]
+    severity: fail
+
+  - rule_id: client_id_unique
+    rule_type: uniqueness
+    params:
+      columns: [client_id]
+    severity: fail
+
+  - rule_id: client_segment_domain
+    rule_type: accepted_values
+    params:
+      column: client_segment
+      allowed_values: [retail, sme, corporate, private]
+    severity: warn
+
+  - rule_id: country_code_domain
+    rule_type: accepted_values
+    params:
+      column: country_code
+      allowed_values: [NL, DE, BE, FR]
+    severity: warn

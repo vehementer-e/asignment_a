@@ -1,0 +1,98 @@
+pipeline_id: credits_curated
+version: 1
+owner: data-platform
+layer: silver
+description: Curate raw credit records into a standardized silver dataset.
+engine: pyspark
+schedule: "15 6 * * *"
+runtime_parameters:
+  - name: business_date
+    type: date
+    required: true
+  - name: run_id
+    type: string
+    required: true
+sources:
+  - source_id: credits_raw
+    source_type: csv
+    path: "${storage.landing_root}/credits/"
+    options:
+      header: true
+      inferSchema: true
+    logical_name: credits
+    alias: src_credits
+targets:
+  - target_id: credits_silver
+    target_type: delta
+    mode: overwrite
+    catalog: "${databricks.default_catalog}"
+    schema: risk
+    table: credits_silver
+    path: "${storage.silver_root}/risk/credits_silver"
+steps:
+  - step_id: read_credits
+    step_type: read
+    source_id: credits_raw
+    output_df: credits_raw_df
+
+  - step_id: standardize_column_names
+    step_type: transformation
+    transformation: rename_columns
+    input_df: credits_raw_df
+    output_df: credits_std_df
+    params:
+      mappings:
+        CreditID: credit_id
+        ClientID: client_id
+        CreditStatus: credit_status
+        OutstandingBalance: outstanding_balance
+        MonthlyPayment: monthly_payment
+        OriginationDate: origination_date
+
+  - step_id: cast_credit_types
+    step_type: transformation
+    transformation: cast_columns
+    input_df: credits_std_df
+    output_df: credits_typed_df
+    params:
+      columns:
+        credit_id: string
+        client_id: string
+        credit_status: string
+        outstanding_balance: decimal(18,2)
+        monthly_payment: decimal(18,2)
+        origination_date: date
+
+  - step_id: derive_audit_columns
+    step_type: transformation
+    transformation: derive_columns
+    input_df: credits_typed_df
+    output_df: credits_enriched_df
+    params:
+      expressions:
+        business_date: "to_date('{{ runtime.business_date }}')"
+        ingestion_ts: "current_timestamp()"
+
+  - step_id: deduplicate_credits
+    step_type: transformation
+    transformation: deduplicate
+    input_df: credits_enriched_df
+    output_df: credits_final_df
+    params:
+      key_columns: [credit_id]
+      order_by:
+        - column: ingestion_ts
+          direction: desc
+
+dq:
+  apply_to: credits_final_df
+  include_rulepacks:
+    - common_validations
+    - credit_validations
+  rules: []
+write:
+  input_df: credits_final_df
+  target_id: credits_silver
+post_write_checks:
+  - check_type: row_count_reconciliation
+    expected_relation: output_lte_input

@@ -1,0 +1,20 @@
+rulepack_id: common_validations
+version: 1
+rules:
+  - rule_id: row_count_gt_zero
+    rule_type: row_count_min
+    params:
+      min_rows: 1
+    severity: fail
+
+  - rule_id: ingestion_ts_not_null
+    rule_type: not_null
+    params:
+      columns: [ingestion_ts]
+    severity: warn
+
+  - rule_id: business_date_not_null
+    rule_type: not_null
+    params:
+      columns: [business_date]
+    severity: fail

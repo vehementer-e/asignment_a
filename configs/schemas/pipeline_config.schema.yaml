@@ -1,0 +1,146 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: PipelineConfig
+type: object
+required:
+  - pipeline_id
+  - version
+  - owner
+  - layer
+  - engine
+  - sources
+  - targets
+  - steps
+  - dq
+  - write
+properties:
+  pipeline_id:
+    type: string
+  version:
+    type: integer
+    minimum: 1
+  owner:
+    type: string
+  layer:
+    type: string
+    enum: [bronze, silver, gold]
+  description:
+    type: string
+  engine:
+    type: string
+    enum: [pyspark]
+  schedule:
+    type: string
+  runtime_parameters:
+    type: array
+    items:
+      type: object
+      required: [name, type, required]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [string, integer, boolean, date]
+        required:
+          type: boolean
+        default: {}
+  sources:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [source_id, source_type]
+      properties:
+        source_id:
+          type: string
+        source_type:
+          type: string
+          enum: [csv, json, parquet, delta, delta_table]
+        path:
+          type: string
+        catalog:
+          type: string
+        schema:
+          type: string
+        table:
+          type: string
+        alias:
+          type: string
+        options:
+          type: object
+          additionalProperties: true
+  targets:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [target_id, target_type, mode]
+      properties:
+        target_id:
+          type: string
+        target_type:
+          type: string
+          enum: [delta]
+        mode:
+          type: string
+          enum: [append, overwrite, merge]
+        catalog:
+          type: string
+        schema:
+          type: string
+        table:
+          type: string
+        path:
+          type: string
+  steps:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [step_id, step_type, output_df]
+      properties:
+        step_id:
+          type: string
+        step_type:
+          type: string
+          enum: [read, transformation]
+        source_id:
+          type: string
+        transformation:
+          type: string
+        input_df:
+          type: string
+        right_df:
+          type: string
+        output_df:
+          type: string
+        params:
+          type: object
+          additionalProperties: true
+  dq:
+    type: object
+    required: [apply_to]
+    properties:
+      apply_to:
+        type: string
+      include_rulepacks:
+        type: array
+        items:
+          type: string
+      rules:
+        type: array
+        items:
+          type: object
+  write:
+    type: object
+    required: [input_df, target_id]
+    properties:
+      input_df:
+        type: string
+      target_id:
+        type: string
+  post_write_checks:
+    type: array
+    items:
+      type: object
+additionalProperties: false
