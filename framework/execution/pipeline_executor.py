@@ -444,13 +444,15 @@ class PipelineExecutor:
         builder = self.run_metadata_builder or RunMetadataBuilder(
             pipeline_id=getattr(pipeline, "pipeline_id", "unknown_pipeline"),
             environment=getattr(environment, "environment", None) or getattr(environment, "name", "unknown_env"),
-            runtime_params=runtime,
         )
         return builder.build(
             pipeline_config=pipeline,
             environment_config=environment,
-            rulepacks=effective_dq_rules,
-            run_id=run_id,
+            runtime_context={
+                **runtime,
+                "run_id": run_id,
+                "effective_dq_rules": effective_dq_rules,
+            },
         )
 
     def _generate_run_id(self, pipeline_id: str) -> str:
