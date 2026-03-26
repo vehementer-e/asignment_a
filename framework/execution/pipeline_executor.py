@@ -1,351 +1,428 @@
+
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterable, Mapping, Optional
+from typing import Any, Dict, List, Optional
+
+from framework.audit.control_logger import ControlLogger
+from framework.audit.dq_audit_logger import DQAuditLogger
+from framework.audit.run_metadata import RunMetadataBuilder
+from framework.dq.executor import DQExecutor
+from framework.io.readers import ReaderRegistry
+from framework.io.writers import WriterRegistry
+from framework.transformations.registry import TransformationRegistry
+
 
 logger = logging.getLogger(__name__)
 
 
-class PipelineExecutionError(RuntimeError):
-    """Raised when pipeline execution fails."""
-
-
-@dataclass(slots=True)
-class ExecutionContext:
-    pipeline_id: str
-    environment: str
-    runtime: dict[str, Any]
-    config_hash: str
-    started_at: str
-    dry_run: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class StepResult:
-    step_id: str
-    status: str
-    row_count: Optional[int] = None
-    input_df: Optional[str] = None
-    output_df: Optional[str] = None
-    details: dict[str, Any] = field(default_factory=dict)
-
-
 class PipelineExecutor:
     """
-    Small execution orchestrator that consumes the bundle returned by
-    framework.config.merger.build_execution_bundle().
+    Generic config-driven pipeline executor.
 
-    Design goals:
-      - usable today for dry-run / validation-first execution
-      - easy to extend with Spark readers, writers, transformations, and DQ engines
-      - no hard dependency on pyspark for local config validation/demo runs
+    Expected bundle shape (from config loader / merger layer):
+    {
+        "pipeline": <PipelineConfig>,
+        "environment": <EnvironmentConfig>,
+        "runtime": {...},
+        "effective_dq_rules": [...],
+    }
+
+    The executor is intentionally glue-code heavy and business-logic light.
     """
 
     def __init__(
         self,
-        *,
-        spark: Any | None = None,
-        readers: Mapping[str, Callable[..., Any]] | None = None,
-        transformations: Mapping[str, Callable[..., Any]] | None = None,
-        writer: Callable[..., Any] | None = None,
-        dq_executor: Callable[..., Any] | None = None,
-        logger_: logging.Logger | None = None,
+        reader_registry: Optional[ReaderRegistry] = None,
+        writer_registry: Optional[WriterRegistry] = None,
+        transformation_registry: Optional[TransformationRegistry] = None,
+        dq_executor: Optional[DQExecutor] = None,
+        control_logger: Optional[ControlLogger] = None,
+        dq_audit_logger: Optional[DQAuditLogger] = None,
+        run_metadata_builder: Optional[RunMetadataBuilder] = None,
     ) -> None:
-        self.spark = spark
-        self.readers = dict(readers or {})
-        self.transformations = dict(transformations or {})
-        self.writer = writer
-        self.dq_executor = dq_executor
-        self.logger = logger_ or logger
+        self.reader_registry = reader_registry or ReaderRegistry.with_defaults()
+        self.writer_registry = writer_registry or WriterRegistry.with_defaults()
+        self.transformation_registry = transformation_registry or TransformationRegistry.with_defaults()
+        self.dq_executor = dq_executor or DQExecutor.with_defaults()
+        self.control_logger = control_logger or ControlLogger()
+        self.dq_audit_logger = dq_audit_logger or DQAuditLogger()
+        self.run_metadata_builder = run_metadata_builder or RunMetadataBuilder()
 
-    def execute(self, bundle: Mapping[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
-        pipeline = dict(bundle["pipeline"])
-        environment = dict(bundle["environment"])
-        runtime = dict(bundle["runtime"])
-        metadata = dict(bundle.get("metadata", {}))
+    def execute(self, execution_bundle: Dict[str, Any], dry_run: bool = False) -> Dict[str, Any]:
+        pipeline = execution_bundle["pipeline"]
+        environment = execution_bundle["environment"]
+        runtime = execution_bundle.get("runtime", {}) or {}
+        effective_dq_rules = execution_bundle.get("effective_dq_rules", []) or []
 
-        context = ExecutionContext(
-            pipeline_id=pipeline["pipeline_id"],
-            environment=environment["environment"],
+        pipeline_id = getattr(pipeline, "pipeline_id", "unknown_pipeline")
+        env_name = getattr(environment, "name", "unknown_env")
+        run_id = runtime.get("run_id") or self.run_metadata_builder.generate_run_id(pipeline_id)
+
+        metadata = self.run_metadata_builder.build(
+            pipeline=pipeline,
+            environment=environment,
             runtime=runtime,
-            config_hash=_hash_bundle(bundle),
-            started_at=_utc_now_iso(),
-            dry_run=dry_run,
+            run_id=run_id,
+            effective_dq_rules=effective_dq_rules,
+        )
+
+        self.control_logger.log_run_start(
+            pipeline_id=pipeline_id,
+            run_id=run_id,
+            environment=env_name,
             metadata=metadata,
         )
 
-        self.logger.info(
-            "Starting pipeline '%s' in environment '%s' (dry_run=%s)",
-            context.pipeline_id,
-            context.environment,
-            context.dry_run,
-        )
+        start_ts = self._utc_now()
+        dataframes: Dict[str, Any] = {}
+        step_results: List[Dict[str, Any]] = []
+        dq_results: List[Dict[str, Any]] = []
+        output_targets: List[Dict[str, Any]] = []
+        warnings: List[str] = []
 
-        dataframe_store: dict[str, Any] = {}
-        step_results: list[StepResult] = []
+        failed = False
+        failure_reason = None
 
-        for step in pipeline.get("steps", []):
-            result = self._execute_step(step, pipeline, environment, context, dataframe_store)
-            step_results.append(result)
+        try:
+            steps = list(getattr(pipeline, "steps", []) or [])
 
-        dq_result = self._execute_dq(pipeline, context, dataframe_store)
-        write_result = self._execute_write(pipeline, environment, context, dataframe_store)
+            for step in steps:
+                step_id = getattr(step, "step_id", "unknown_step")
+                step_type = getattr(step, "type", "unknown")
+                step_start = self._utc_now()
 
-        finished_at = _utc_now_iso()
-        final_status = self._derive_pipeline_status(step_results, dq_result, write_result)
+                self.control_logger.log_step_start(
+                    pipeline_id=pipeline_id,
+                    run_id=run_id,
+                    step_id=step_id,
+                    step_type=step_type,
+                )
 
+                try:
+                    if step_type == "read":
+                        result = self._execute_read_step(
+                            step=step,
+                            pipeline=pipeline,
+                            environment=environment,
+                            runtime=runtime,
+                            dry_run=dry_run,
+                        )
+                        dataframes[result["output_df"]] = result["dataframe"]
+
+                    elif step_type == "write":
+                        result = self._execute_write_step(
+                            step=step,
+                            pipeline=pipeline,
+                            environment=environment,
+                            runtime=runtime,
+                            dataframes=dataframes,
+                            dry_run=dry_run,
+                        )
+                        output_targets.append(result)
+
+                    elif step_type == "dq":
+                        dataset_name = getattr(step, "input_df", None) or getattr(step, "params", {}).get("input_df")
+                        dataset_df = dataframes.get(dataset_name)
+
+                        result = self._execute_dq_step(
+                            step=step,
+                            dataset_name=dataset_name,
+                            dataset_df=dataset_df,
+                            rules=effective_dq_rules,
+                            runtime=runtime,
+                            dry_run=dry_run,
+                        )
+                        dq_results.extend(result["dq_results"])
+                        self.dq_audit_logger.log_many(
+                            pipeline_id=pipeline_id,
+                            run_id=run_id,
+                            dataset_name=dataset_name,
+                            dq_results=result["dq_results"],
+                        )
+                        warnings.extend(result.get("warnings", []))
+
+                    else:
+                        result = self._execute_transformation_step(
+                            step=step,
+                            runtime=runtime,
+                            dataframes=dataframes,
+                            dry_run=dry_run,
+                        )
+                        output_df_name = result["output_df"]
+                        dataframes[output_df_name] = result["dataframe"]
+
+                    step_end = self._utc_now()
+                    enriched_result = {
+                        **result,
+                        "step_id": step_id,
+                        "step_type": step_type,
+                        "started_at": step_start,
+                        "finished_at": step_end,
+                        "status": "SUCCESS",
+                    }
+                    step_results.append(enriched_result)
+
+                    self.control_logger.log_step_end(
+                        pipeline_id=pipeline_id,
+                        run_id=run_id,
+                        step_id=step_id,
+                        status="SUCCESS",
+                        details=self._serialise(enriched_result),
+                    )
+
+                except Exception as exc:  # noqa: BLE001
+                    step_end = self._utc_now()
+                    failed = True
+                    failure_reason = f"{step_id}: {exc}"
+
+                    error_result = {
+                        "step_id": step_id,
+                        "step_type": step_type,
+                        "started_at": step_start,
+                        "finished_at": step_end,
+                        "status": "FAILED",
+                        "error": str(exc),
+                    }
+                    step_results.append(error_result)
+
+                    self.control_logger.log_step_end(
+                        pipeline_id=pipeline_id,
+                        run_id=run_id,
+                        step_id=step_id,
+                        status="FAILED",
+                        details=self._serialise(error_result),
+                    )
+                    raise
+
+            final_status = "SUCCESS_WITH_WARNINGS" if warnings else "SUCCESS"
+
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Pipeline execution failed for %s", pipeline_id)
+            final_status = "FAILED"
+            failed = True
+            failure_reason = failure_reason or str(exc)
+
+        end_ts = self._utc_now()
         summary = {
-            "pipeline_id": context.pipeline_id,
-            "environment": context.environment,
+            "pipeline_id": pipeline_id,
+            "environment": env_name,
+            "run_id": run_id,
             "status": final_status,
-            "dry_run": context.dry_run,
-            "config_hash": context.config_hash,
-            "started_at": context.started_at,
-            "finished_at": finished_at,
-            "runtime": runtime,
-            "steps": [result.__dict__ for result in step_results],
-            "dq": dq_result,
-            "write": write_result,
-            "materialized_dataframes": sorted(dataframe_store.keys()),
+            "failed": failed,
+            "failure_reason": failure_reason,
+            "dry_run": dry_run,
+            "started_at": start_ts,
+            "finished_at": end_ts,
+            "step_results": step_results,
+            "dq_results": dq_results,
+            "warnings": warnings,
+            "output_targets": output_targets,
+            "datasets_materialized": sorted(list(dataframes.keys())),
+            "metadata": metadata,
         }
-        self.logger.info(
-            "Pipeline '%s' finished with status=%s",
-            context.pipeline_id,
-            final_status,
+
+        self.control_logger.log_run_end(
+            pipeline_id=pipeline_id,
+            run_id=run_id,
+            status=final_status,
+            details=self._serialise(summary),
         )
         return summary
 
-    def _execute_step(
-        self,
-        step: Mapping[str, Any],
-        pipeline: Mapping[str, Any],
-        environment: Mapping[str, Any],
-        context: ExecutionContext,
-        dataframe_store: dict[str, Any],
-    ) -> StepResult:
-        step_id = step["step_id"]
-        step_type = step["step_type"]
-        self.logger.info("Executing step '%s' (%s)", step_id, step_type)
+    def _execute_read_step(self, step: Any, pipeline: Any, environment: Any, runtime: Dict[str, Any], dry_run: bool) -> Dict[str, Any]:
+        params = getattr(step, "params", {}) or {}
+        source_id = params["source_id"]
+        output_df = getattr(step, "output_df", None) or source_id
 
-        if step_type == "read":
-            output_df = step["output_df"]
-            source = _get_source_by_id(pipeline, step["source_id"])
-            if context.dry_run:
-                dataframe_store[output_df] = {
-                    "kind": "dry_run_dataframe",
-                    "source_id": source["source_id"],
-                    "source_type": source["source_type"],
-                }
-                return StepResult(
-                    step_id=step_id,
-                    status="DRY_RUN",
-                    output_df=output_df,
-                    details={"source_id": source["source_id"], "source_type": source["source_type"]},
-                )
+        source = self._find_by_id(getattr(pipeline, "sources", []) or [], source_id, "source_id")
+        source_format = getattr(source, "format", None)
 
-            reader = self.readers.get(source["source_type"])
-            if reader is None:
-                raise PipelineExecutionError(
-                    f"No reader registered for source_type='{source['source_type']}' in step '{step_id}'"
-                )
-            df = reader(source=source, spark=self.spark, environment=environment, context=context)
-            dataframe_store[output_df] = df
-            return StepResult(
-                step_id=step_id,
-                status="SUCCESS",
-                output_df=output_df,
-                row_count=_safe_row_count(df),
-                details={"source_id": source["source_id"]},
-            )
+        if dry_run:
+            dataframe = {"__dry_run__": True, "source_id": source_id, "format": source_format}
+            row_count = None
+        else:
+            reader = self.reader_registry.get(source_format)
+            dataframe = reader.read(source=source, environment=environment, runtime=runtime)
+            row_count = self._safe_count(dataframe)
 
-        if step_type == "transformation":
-            transformation_name = step["transformation"]
-            input_df_name = step["input_df"]
-            output_df_name = step["output_df"]
-            input_df = dataframe_store[input_df_name]
-            right_df = dataframe_store.get(step.get("right_df")) if step.get("right_df") else None
+        return {
+            "action": "read",
+            "source_id": source_id,
+            "output_df": output_df,
+            "dataframe": dataframe,
+            "row_count": row_count,
+            "format": source_format,
+        }
 
-            if context.dry_run:
-                dataframe_store[output_df_name] = {
-                    "kind": "dry_run_dataframe",
-                    "derived_from": input_df_name,
-                    "transformation": transformation_name,
-                }
-                return StepResult(
-                    step_id=step_id,
-                    status="DRY_RUN",
-                    input_df=input_df_name,
-                    output_df=output_df_name,
-                    details={
-                        "transformation": transformation_name,
-                        "params": step.get("params", {}),
-                        "has_right_df": bool(step.get("right_df")),
-                    },
-                )
+    def _execute_transformation_step(self, step: Any, runtime: Dict[str, Any], dataframes: Dict[str, Any], dry_run: bool) -> Dict[str, Any]:
+        step_type = getattr(step, "type", None)
+        input_df_name = getattr(step, "input_df", None)
+        output_df_name = getattr(step, "output_df", None) or input_df_name
 
-            transform_fn = self.transformations.get(transformation_name)
-            if transform_fn is None:
-                raise PipelineExecutionError(
-                    f"No transformation registered for '{transformation_name}' in step '{step_id}'"
-                )
-            result_df = transform_fn(
+        if not input_df_name:
+            raise ValueError(f"Transformation step '{getattr(step, 'step_id', '?')}' must declare input_df")
+
+        input_df = dataframes[input_df_name]
+        params = getattr(step, "params", {}) or {}
+
+        if dry_run:
+            dataframe = {
+                "__dry_run__": True,
+                "transformation": step_type,
+                "input_df": input_df_name,
+                "params": params,
+            }
+            row_count = None
+        else:
+            transformation = self.transformation_registry.get(step_type)
+            dataframe = transformation.apply(
                 df=input_df,
-                right_df=right_df,
-                params=step.get("params", {}),
-                spark=self.spark,
-                context=context,
+                params=params,
+                context={
+                    "runtime": runtime,
+                    "dataframes": dataframes,
+                    "step": step,
+                },
             )
-            dataframe_store[output_df_name] = result_df
-            return StepResult(
-                step_id=step_id,
-                status="SUCCESS",
-                input_df=input_df_name,
-                output_df=output_df_name,
-                row_count=_safe_row_count(result_df),
-                details={"transformation": transformation_name},
-            )
+            row_count = self._safe_count(dataframe)
 
-        raise PipelineExecutionError(f"Unsupported step_type='{step_type}' in step '{step_id}'")
+        return {
+            "action": "transform",
+            "transformation_type": step_type,
+            "input_df": input_df_name,
+            "output_df": output_df_name,
+            "dataframe": dataframe,
+            "row_count": row_count,
+        }
 
-    def _execute_dq(
+    def _execute_dq_step(
         self,
-        pipeline: Mapping[str, Any],
-        context: ExecutionContext,
-        dataframe_store: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        dq_cfg = dict(pipeline.get("dq", {}))
-        apply_to = dq_cfg.get("apply_to")
-        rules = list(dq_cfg.get("effective_rules", dq_cfg.get("rules", [])))
+        step: Any,
+        dataset_name: Optional[str],
+        dataset_df: Any,
+        rules: List[Any],
+        runtime: Dict[str, Any],
+        dry_run: bool,
+    ) -> Dict[str, Any]:
+        if not dataset_name:
+            raise ValueError(f"DQ step '{getattr(step, 'step_id', '?')}' requires input_df")
+        if dataset_df is None:
+            raise ValueError(f"DQ step '{getattr(step, 'step_id', '?')}' references missing dataset '{dataset_name}'")
 
-        if not apply_to:
-            return {"status": "SKIPPED", "reason": "No dq.apply_to configured", "results": []}
+        step_rule_ids = (getattr(step, "params", {}) or {}).get("rule_ids")
+        selected_rules = self._select_dq_rules(rules, step_rule_ids)
 
-        if apply_to not in dataframe_store:
-            raise PipelineExecutionError(
-                f"dq.apply_to='{apply_to}' was not materialized before DQ execution"
+        if dry_run:
+            dq_results = [
+                {
+                    "rule_id": getattr(rule, "rule_id", "unknown"),
+                    "rule_type": getattr(rule, "rule_type", "unknown"),
+                    "status": "SKIPPED",
+                    "severity": getattr(rule, "severity", "warn"),
+                    "message": "DQ skipped because executor is in dry_run mode",
+                }
+                for rule in selected_rules
+            ]
+            warnings = []
+        else:
+            dq_results = self.dq_executor.execute_many(
+                df=dataset_df,
+                rules=selected_rules,
+                context={"runtime": runtime, "dataset_name": dataset_name},
             )
+            warnings = self._collect_rule_warnings(dq_results)
 
-        if context.dry_run:
-            return {
-                "status": "DRY_RUN",
-                "applies_to": apply_to,
-                "rule_count": len(rules),
-                "results": [
-                    {
-                        "rule_id": rule["rule_id"],
-                        "status": "NOT_EXECUTED",
-                        "severity": rule["severity"],
-                    }
-                    for rule in rules
-                ],
-            }
+        return {
+            "action": "dq",
+            "dataset_name": dataset_name,
+            "dq_results": [self._serialise(item) for item in dq_results],
+            "warnings": warnings,
+        }
 
-        if self.dq_executor is None:
-            return {
-                "status": "SKIPPED",
-                "reason": "No dq_executor registered",
-                "applies_to": apply_to,
-                "rule_count": len(rules),
-            }
-
-        return self.dq_executor(
-            df=dataframe_store[apply_to],
-            dq_config=dq_cfg,
-            context=context,
-        )
-
-    def _execute_write(
+    def _execute_write_step(
         self,
-        pipeline: Mapping[str, Any],
-        environment: Mapping[str, Any],
-        context: ExecutionContext,
-        dataframe_store: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        write_cfg = dict(pipeline["write"])
-        input_df_name = write_cfg["input_df"]
-        target = _get_target_by_id(pipeline, write_cfg["target_id"])
+        step: Any,
+        pipeline: Any,
+        environment: Any,
+        runtime: Dict[str, Any],
+        dataframes: Dict[str, Any],
+        dry_run: bool,
+    ) -> Dict[str, Any]:
+        params = getattr(step, "params", {}) or {}
+        input_df_name = getattr(step, "input_df", None)
+        target_id = params["target_id"]
 
-        if input_df_name not in dataframe_store:
-            raise PipelineExecutionError(
-                f"write.input_df='{input_df_name}' was not produced before write phase"
-            )
+        if input_df_name not in dataframes:
+            raise ValueError(f"Write step '{getattr(step, 'step_id', '?')}' references missing dataframe '{input_df_name}'")
 
-        if context.dry_run:
-            return {
-                "status": "DRY_RUN",
-                "input_df": input_df_name,
-                "target_id": target["target_id"],
-                "mode": target["mode"],
-                "path": target.get("path"),
-                "table": f"{target.get('catalog')}.{target.get('schema')}.{target.get('table')}",
-            }
+        target = self._find_by_id(getattr(pipeline, "targets", []) or [], target_id, "target_id")
+        target_format = getattr(target, "format", None)
+        dataset = dataframes[input_df_name]
 
-        if self.writer is None:
-            return {
-                "status": "SKIPPED",
-                "reason": "No writer registered",
-                "input_df": input_df_name,
-                "target_id": target["target_id"],
-            }
+        if dry_run:
+            row_count = None
+        else:
+            writer = self.writer_registry.get(target_format)
+            writer.write(df=dataset, target=target, environment=environment, runtime=runtime)
+            row_count = self._safe_count(dataset)
 
-        return self.writer(
-            df=dataframe_store[input_df_name],
-            target=target,
-            environment=environment,
-            context=context,
-        )
+        return {
+            "action": "write",
+            "input_df": input_df_name,
+            "target_id": target_id,
+            "format": target_format,
+            "mode": getattr(target, "mode", None),
+            "row_count": row_count,
+        }
 
     @staticmethod
-    def _derive_pipeline_status(
-        step_results: Iterable[StepResult],
-        dq_result: Mapping[str, Any],
-        write_result: Mapping[str, Any],
-    ) -> str:
-        step_statuses = {item.status for item in step_results}
-        dq_status = dq_result.get("status")
-        write_status = write_result.get("status")
+    def _find_by_id(items: List[Any], target_id: str, attribute: str) -> Any:
+        for item in items:
+            if getattr(item, attribute, None) == target_id:
+                return item
+        raise ValueError(f"Unknown {attribute} '{target_id}'")
 
-        if "FAILED" in step_statuses or dq_status == "FAILED" or write_status == "FAILED":
-            return "FAILED"
-        if "DRY_RUN" in step_statuses or dq_status == "DRY_RUN" or write_status == "DRY_RUN":
-            return "DRY_RUN"
-        if dq_status == "WARNING":
-            return "SUCCESS_WITH_WARNINGS"
-        return "SUCCESS"
-
-
-def _safe_row_count(df: Any) -> int | None:
-    try:
-        if hasattr(df, "count") and callable(df.count):
+    @staticmethod
+    def _safe_count(df: Any) -> Optional[int]:
+        try:
             return int(df.count())
-    except Exception:  # pragma: no cover - best-effort metric only
-        return None
-    return None
+        except Exception:  # noqa: BLE001
+            return None
 
+    @staticmethod
+    def _utc_now() -> str:
+        return datetime.now(timezone.utc).isoformat()
 
-def _get_source_by_id(pipeline: Mapping[str, Any], source_id: str) -> dict[str, Any]:
-    for source in pipeline.get("sources", []):
-        if source["source_id"] == source_id:
-            return dict(source)
-    raise PipelineExecutionError(f"Unknown source_id='{source_id}'")
+    @staticmethod
+    def _serialise(value: Any) -> Any:
+        if is_dataclass(value):
+            return asdict(value)
+        if isinstance(value, list):
+            return [PipelineExecutor._serialise(item) for item in value]
+        if isinstance(value, dict):
+            return {key: PipelineExecutor._serialise(item) for key, item in value.items()}
+        if hasattr(value, "model_dump"):
+            return value.model_dump()
+        return value
 
+    @staticmethod
+    def _select_dq_rules(rules: List[Any], rule_ids: Optional[List[str]]) -> List[Any]:
+        if not rule_ids:
+            return list(rules)
+        allowed = set(rule_ids)
+        return [rule for rule in rules if getattr(rule, "rule_id", None) in allowed]
 
-def _get_target_by_id(pipeline: Mapping[str, Any], target_id: str) -> dict[str, Any]:
-    for target in pipeline.get("targets", []):
-        if target["target_id"] == target_id:
-            return dict(target)
-    raise PipelineExecutionError(f"Unknown target_id='{target_id}'")
-
-
-def _hash_bundle(bundle: Mapping[str, Any]) -> str:
-    payload = json.dumps(bundle, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    @staticmethod
+    def _collect_rule_warnings(results: List[Any]) -> List[str]:
+        warnings: List[str] = []
+        for item in results:
+            result = PipelineExecutor._serialise(item)
+            status = result.get("status")
+            severity = result.get("severity")
+            rule_id = result.get("rule_id")
+            if status in {"FAILED", "WARNING"} and severity in {"warn", "warning"}:
+                warnings.append(f"{rule_id}: {status}")
+        return warnings
