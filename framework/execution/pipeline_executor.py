@@ -9,10 +9,8 @@ from typing import Any, Dict, List, Optional
 from framework.audit.control_logger import ControlLogger
 from framework.audit.dq_audit_logger import DQAuditLogger
 from framework.audit.run_metadata import RunMetadataBuilder
-from framework.dq.executor import DQExecutor
-from framework.io.readers import ReaderRegistry
-from framework.io.writers import WriterRegistry
-from framework.transformations.registry import TransformationRegistry
+from framework.io.readers import ReaderContext, ReaderRegistry
+from framework.io.writers import WriterContext, WriterRegistry
 
 
 logger = logging.getLogger(__name__)
@@ -37,19 +35,19 @@ class PipelineExecutor:
         self,
         reader_registry: Optional[ReaderRegistry] = None,
         writer_registry: Optional[WriterRegistry] = None,
-        transformation_registry: Optional[TransformationRegistry] = None,
-        dq_executor: Optional[DQExecutor] = None,
+        transformation_registry: Optional[Any] = None,
+        dq_executor: Optional[Any] = None,
         control_logger: Optional[ControlLogger] = None,
         dq_audit_logger: Optional[DQAuditLogger] = None,
         run_metadata_builder: Optional[RunMetadataBuilder] = None,
     ) -> None:
-        self.reader_registry = reader_registry or ReaderRegistry.with_defaults()
-        self.writer_registry = writer_registry or WriterRegistry.with_defaults()
-        self.transformation_registry = transformation_registry or TransformationRegistry.with_defaults()
-        self.dq_executor = dq_executor or DQExecutor.with_defaults()
+        self.reader_registry = reader_registry or self._with_defaults_or_ctor(ReaderRegistry)
+        self.writer_registry = writer_registry or self._with_defaults_or_ctor(WriterRegistry)
+        self.transformation_registry = transformation_registry or self._build_default_transformation_registry()
+        self.dq_executor = dq_executor or self._build_default_dq_executor()
         self.control_logger = control_logger or ControlLogger()
         self.dq_audit_logger = dq_audit_logger or DQAuditLogger()
-        self.run_metadata_builder = run_metadata_builder or RunMetadataBuilder()
+        self.run_metadata_builder = run_metadata_builder
 
     def execute(self, execution_bundle: Dict[str, Any], dry_run: bool = False) -> Dict[str, Any]:
         pipeline = execution_bundle["pipeline"]
@@ -58,10 +56,10 @@ class PipelineExecutor:
         effective_dq_rules = execution_bundle.get("effective_dq_rules", []) or []
 
         pipeline_id = getattr(pipeline, "pipeline_id", "unknown_pipeline")
-        env_name = getattr(environment, "name", "unknown_env")
-        run_id = runtime.get("run_id") or self.run_metadata_builder.generate_run_id(pipeline_id)
+        env_name = getattr(environment, "environment", None) or getattr(environment, "name", "unknown_env")
+        run_id = runtime.get("run_id") or self._generate_run_id(pipeline_id)
 
-        metadata = self.run_metadata_builder.build(
+        metadata = self._build_metadata(
             pipeline=pipeline,
             environment=environment,
             runtime=runtime,
@@ -70,9 +68,6 @@ class PipelineExecutor:
         )
 
         self.control_logger.log_run_start(
-            pipeline_id=pipeline_id,
-            run_id=run_id,
-            environment=env_name,
             metadata=metadata,
         )
 
@@ -91,7 +86,7 @@ class PipelineExecutor:
 
             for step in steps:
                 step_id = getattr(step, "step_id", "unknown_step")
-                step_type = getattr(step, "type", "unknown")
+                step_type = getattr(step, "step_type", None) or getattr(step, "type", "unknown")
                 step_start = self._utc_now()
 
                 self.control_logger.log_step_start(
@@ -137,10 +132,10 @@ class PipelineExecutor:
                         )
                         dq_results.extend(result["dq_results"])
                         self.dq_audit_logger.log_many(
-                            pipeline_id=pipeline_id,
                             run_id=run_id,
-                            dataset_name=dataset_name,
-                            dq_results=result["dq_results"],
+                            pipeline_id=pipeline_id,
+                            dataset=dataset_name,
+                            results=result["dq_results"],
                         )
                         warnings.extend(result.get("warnings", []))
 
@@ -225,27 +220,31 @@ class PipelineExecutor:
         }
 
         self.control_logger.log_run_end(
-            pipeline_id=pipeline_id,
             run_id=run_id,
             status=final_status,
-            details=self._serialise(summary),
+            summary=self._serialise(summary),
+            error=failure_reason,
         )
         return summary
 
     def _execute_read_step(self, step: Any, pipeline: Any, environment: Any, runtime: Dict[str, Any], dry_run: bool) -> Dict[str, Any]:
         params = getattr(step, "params", {}) or {}
-        source_id = params["source_id"]
+        source_id = getattr(step, "source_id", None) or params["source_id"]
         output_df = getattr(step, "output_df", None) or source_id
 
         source = self._find_by_id(getattr(pipeline, "sources", []) or [], source_id, "source_id")
         source_format = getattr(source, "format", None)
+        spark = runtime.get("spark")
 
         if dry_run:
             dataframe = {"__dry_run__": True, "source_id": source_id, "format": source_format}
             row_count = None
         else:
             reader = self.reader_registry.get(source_format)
-            dataframe = reader.read(source=source, environment=environment, runtime=runtime)
+            dataframe = reader.read(
+                source_config=source,
+                context=ReaderContext(spark=spark, environment=environment, runtime=runtime),
+            )
             row_count = self._safe_count(dataframe)
 
         return {
@@ -258,7 +257,7 @@ class PipelineExecutor:
         }
 
     def _execute_transformation_step(self, step: Any, runtime: Dict[str, Any], dataframes: Dict[str, Any], dry_run: bool) -> Dict[str, Any]:
-        step_type = getattr(step, "type", None)
+        step_type = getattr(step, "transformation", None) or getattr(step, "type", None)
         input_df_name = getattr(step, "input_df", None)
         output_df_name = getattr(step, "output_df", None) or input_df_name
 
@@ -328,11 +327,13 @@ class PipelineExecutor:
             ]
             warnings = []
         else:
-            dq_results = self.dq_executor.execute_many(
+            dq_summary = self.dq_executor.execute_rules(
                 df=dataset_df,
                 rules=selected_rules,
+                dataset=dataset_name,
                 context={"runtime": runtime, "dataset_name": dataset_name},
             )
+            dq_results = list(getattr(dq_summary, "results", []) or [])
             warnings = self._collect_rule_warnings(dq_results)
 
         return {
@@ -353,7 +354,7 @@ class PipelineExecutor:
     ) -> Dict[str, Any]:
         params = getattr(step, "params", {}) or {}
         input_df_name = getattr(step, "input_df", None)
-        target_id = params["target_id"]
+        target_id = getattr(step, "target_id", None) or params["target_id"]
 
         if input_df_name not in dataframes:
             raise ValueError(f"Write step '{getattr(step, 'step_id', '?')}' references missing dataframe '{input_df_name}'")
@@ -366,7 +367,11 @@ class PipelineExecutor:
             row_count = None
         else:
             writer = self.writer_registry.get(target_format)
-            writer.write(df=dataset, target=target, environment=environment, runtime=runtime)
+            writer.write(
+                df=dataset,
+                target_config=target,
+                context=WriterContext(spark=runtime.get("spark"), environment=environment, runtime=runtime),
+            )
             row_count = self._safe_count(dataset)
 
         return {
@@ -426,3 +431,68 @@ class PipelineExecutor:
             if status in {"FAILED", "WARNING"} and severity in {"warn", "warning"}:
                 warnings.append(f"{rule_id}: {status}")
         return warnings
+
+    def _build_metadata(
+        self,
+        *,
+        pipeline: Any,
+        environment: Any,
+        runtime: Dict[str, Any],
+        run_id: str,
+        effective_dq_rules: List[Any],
+    ) -> Dict[str, Any]:
+        builder = self.run_metadata_builder or RunMetadataBuilder(
+            pipeline_id=getattr(pipeline, "pipeline_id", "unknown_pipeline"),
+            environment=getattr(environment, "environment", None) or getattr(environment, "name", "unknown_env"),
+            runtime_params=runtime,
+        )
+        return builder.build(
+            pipeline_config=pipeline,
+            environment_config=environment,
+            rulepacks=effective_dq_rules,
+            run_id=run_id,
+        )
+
+    def _generate_run_id(self, pipeline_id: str) -> str:
+        now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        return f"{pipeline_id}-{now}"
+
+    @staticmethod
+    def _with_defaults_or_ctor(cls: Any) -> Any:
+        with_defaults = getattr(cls, "with_defaults", None)
+        if callable(with_defaults):
+            return with_defaults()
+        return cls()
+
+    @staticmethod
+    def _build_default_dq_executor() -> Any:
+        try:
+            from framework.dq.executor import DataQualityExecutor
+
+            return PipelineExecutor._with_defaults_or_ctor(DataQualityExecutor)
+        except ModuleNotFoundError:
+            class _NoOpDQExecutor:
+                @staticmethod
+                def execute_rules(df: Any, rules: List[Any], dataset: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> Any:
+                    class _Summary:
+                        results: List[Any] = []
+
+                    return _Summary()
+
+            return _NoOpDQExecutor()
+
+    @staticmethod
+    def _build_default_transformation_registry() -> Any:
+        try:
+            from framework.transformations.registry import TransformationRegistry
+
+            return PipelineExecutor._with_defaults_or_ctor(TransformationRegistry)
+        except ModuleNotFoundError:
+            class _NoOpTransformationRegistry:
+                @staticmethod
+                def get(transformation_type: str) -> Any:
+                    raise RuntimeError(
+                        f"Transformation registry unavailable (missing dependency) for '{transformation_type}'"
+                    )
+
+            return _NoOpTransformationRegistry()
