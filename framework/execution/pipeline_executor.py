@@ -68,7 +68,9 @@ class PipelineExecutor:
         )
 
         self.control_logger.log_run_start(
-            metadata=metadata,
+            run_id=run_id,
+            pipeline_id=pipeline_id,
+            payload=metadata,
         )
 
         start_ts = self._utc_now()
@@ -90,10 +92,9 @@ class PipelineExecutor:
                 step_start = self._utc_now()
 
                 self.control_logger.log_step_start(
-                    pipeline_id=pipeline_id,
                     run_id=run_id,
                     step_id=step_id,
-                    step_type=step_type,
+                    payload={"step_type": step_type},
                 )
 
                 try:
@@ -161,11 +162,10 @@ class PipelineExecutor:
                     step_results.append(enriched_result)
 
                     self.control_logger.log_step_end(
-                        pipeline_id=pipeline_id,
                         run_id=run_id,
                         step_id=step_id,
                         status="SUCCESS",
-                        details=self._serialise(enriched_result),
+                        payload=self._serialise(enriched_result),
                     )
 
                 except Exception as exc:  # noqa: BLE001
@@ -184,11 +184,10 @@ class PipelineExecutor:
                     step_results.append(error_result)
 
                     self.control_logger.log_step_end(
-                        pipeline_id=pipeline_id,
                         run_id=run_id,
                         step_id=step_id,
                         status="FAILED",
-                        details=self._serialise(error_result),
+                        payload=self._serialise(error_result),
                     )
                     raise
 
@@ -221,9 +220,9 @@ class PipelineExecutor:
 
         self.control_logger.log_run_end(
             run_id=run_id,
+            pipeline_id=pipeline_id,
             status=final_status,
-            summary=self._serialise(summary),
-            error=failure_reason,
+            payload=self._serialise(summary),
         )
         return summary
 

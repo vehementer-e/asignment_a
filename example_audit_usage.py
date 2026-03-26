@@ -27,15 +27,28 @@ metadata = builder.build(
 )
 
 control = ControlLogger()
-control.log_run_start(metadata)
-control.log_step_start(run_id=metadata["run_id"], step_id="read_clients", step_type="read")
+control.log_run_start(
+    run_id=metadata["run_id"],
+    pipeline_id="clients_curated",
+    payload=metadata,
+)
+control.log_step_start(
+    run_id=metadata["run_id"],
+    step_id="read_clients",
+    payload={"step_type": "read"},
+)
 control.log_step_end(
     run_id=metadata["run_id"],
     step_id="read_clients",
     status="SUCCESS",
-    output_count=100,
+    payload={"output_count": 100},
 )
-control.log_run_end(run_id=metadata["run_id"], status="SUCCESS", summary={"steps": 1})
+control.log_run_end(
+    run_id=metadata["run_id"],
+    pipeline_id="clients_curated",
+    status="SUCCESS",
+    payload={"steps": 1},
+)
 
 class RuleResult:
     def model_dump(self, mode: str = "json"):
