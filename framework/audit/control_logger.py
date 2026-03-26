@@ -10,10 +10,19 @@ class InMemoryControlLogger:
     run_records: List[Dict[str, Any]] = field(default_factory=list)
     step_records: List[Dict[str, Any]] = field(default_factory=list)
 
-    def log_run_start(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def log_run_start(
+        self,
+        *,
+        run_id: str,
+        pipeline_id: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         record = {
-            **metadata,
+            "run_id": run_id,
+            "pipeline_id": pipeline_id,
             "status": "RUNNING",
+            "payload": dict(payload or {}),
+            "started_at": self._utcnow(),
             "updated_at": self._utcnow(),
         }
         self.run_records.append(record)
@@ -23,16 +32,16 @@ class InMemoryControlLogger:
         self,
         *,
         run_id: str,
+        pipeline_id: str,
         status: str,
-        summary: Optional[Dict[str, Any]] = None,
-        error: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         record = self._find_run(run_id)
         record.update(
             {
+                "pipeline_id": pipeline_id,
                 "status": status,
-                "summary": dict(summary or {}),
-                "error": error,
+                "payload": {**record.get("payload", {}), **dict(payload or {})},
                 "ended_at": self._utcnow(),
                 "updated_at": self._utcnow(),
             }
@@ -44,17 +53,13 @@ class InMemoryControlLogger:
         *,
         run_id: str,
         step_id: str,
-        step_type: str,
-        stage: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
+        payload: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         record = {
             "run_id": run_id,
             "step_id": step_id,
-            "step_type": step_type,
-            "stage": stage,
             "status": "RUNNING",
-            "details": dict(details or {}),
+            "payload": dict(payload or {}),
             "started_at": self._utcnow(),
             "updated_at": self._utcnow(),
         }
@@ -67,19 +72,13 @@ class InMemoryControlLogger:
         run_id: str,
         step_id: str,
         status: str,
-        input_count: Optional[int] = None,
-        output_count: Optional[int] = None,
-        details: Optional[Dict[str, Any]] = None,
-        error: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         record = self._find_step(run_id=run_id, step_id=step_id)
         record.update(
             {
                 "status": status,
-                "input_count": input_count,
-                "output_count": output_count,
-                "details": {**record.get("details", {}), **dict(details or {})},
-                "error": error,
+                "payload": {**record.get("payload", {}), **dict(payload or {})},
                 "ended_at": self._utcnow(),
                 "updated_at": self._utcnow(),
             }
