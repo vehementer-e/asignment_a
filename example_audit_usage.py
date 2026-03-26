@@ -16,12 +16,14 @@ rulepacks = [StubConfig(version="common")]
 builder = RunMetadataBuilder(
     pipeline_id="clients_curated",
     environment="dev",
-    runtime_params={"business_date": "2026-03-26"},
 )
 metadata = builder.build(
     pipeline_config=pipeline_cfg,
     environment_config=env_cfg,
-    rulepacks=rulepacks,
+    runtime_context={
+        "business_date": "2026-03-26",
+        "effective_dq_rules": rulepacks,
+    },
 )
 
 control = ControlLogger()
