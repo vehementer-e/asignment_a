@@ -326,13 +326,12 @@ class PipelineExecutor:
             ]
             warnings = []
         else:
-            dq_summary = self.dq_executor.execute_rules(
+            dq_results = self.dq_executor.execute_many(
                 df=dataset_df,
                 rules=selected_rules,
-                dataset=dataset_name,
-                context={"runtime": runtime, "dataset_name": dataset_name},
+                runtime_context=runtime,
+                dataset_name=dataset_name,
             )
-            dq_results = list(getattr(dq_summary, "results", []) or [])
             warnings = self._collect_rule_warnings(dq_results)
 
         return {
@@ -474,11 +473,13 @@ class PipelineExecutor:
         except ModuleNotFoundError:
             class _NoOpDQExecutor:
                 @staticmethod
-                def execute_rules(df: Any, rules: List[Any], dataset: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> Any:
-                    class _Summary:
-                        results: List[Any] = []
-
-                    return _Summary()
+                def execute_many(
+                    df: Any,
+                    rules: List[Any],
+                    runtime_context: Optional[Dict[str, Any]] = None,
+                    dataset_name: Optional[str] = None,
+                ) -> Any:
+                    return []
 
             return _NoOpDQExecutor()
 
