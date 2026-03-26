@@ -98,7 +98,7 @@ def _build_pipeline() -> PipelineConfig:
                 transformation='deduplicate',
                 input_df='clients_raw',
                 output_df='clients_curated_df',
-                params={'keys': ['client_id']},
+                params={'key_columns': ['client_id']},
             ),
         ],
         dq=DQConfig(
@@ -109,7 +109,7 @@ def _build_pipeline() -> PipelineConfig:
                     rule_id='clients_id_not_null',
                     rule_type='not_null',
                     severity=Severity.FAIL,
-                    params={'column': 'client_id'},
+                    params={'columns': ['client_id']},
                 )
             ],
         ),
