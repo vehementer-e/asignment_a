@@ -3,12 +3,12 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional
 
 from .models import DQResult, DQStatus
-from .registry import DQRuleRegistry, build_default_registry
+from .registry import DQRuleRegistry
 
 
 class DataQualityExecutor:
     def __init__(self, registry: Optional[DQRuleRegistry] = None) -> None:
-        self.registry = registry or build_default_registry()
+        self.registry = registry or DQRuleRegistry.with_defaults()
 
     def execute_many(
         self,

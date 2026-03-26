@@ -24,16 +24,19 @@ class DQRuleRegistry:
     def create(self, rule_type: str) -> DataQualityRule:
         return self.get(rule_type)()
 
+    @classmethod
+    def with_defaults(cls) -> "DQRuleRegistry":
+        from .accepted_values import AcceptedValuesRule
+        from .not_null import NotNullRule
+        from .numeric_range import NumericRangeRule
+        from .uniqueness import UniquenessRule
+
+        registry = cls()
+        registry.register('not_null', NotNullRule)
+        registry.register('uniqueness', UniquenessRule)
+        registry.register('accepted_values', AcceptedValuesRule)
+        registry.register('numeric_range', NumericRangeRule)
+        return registry
 
 def build_default_registry() -> DQRuleRegistry:
-    from .accepted_values import AcceptedValuesRule
-    from .not_null import NotNullRule
-    from .numeric_range import NumericRangeRule
-    from .uniqueness import UniquenessRule
-
-    registry = DQRuleRegistry()
-    registry.register('not_null', NotNullRule)
-    registry.register('uniqueness', UniquenessRule)
-    registry.register('accepted_values', AcceptedValuesRule)
-    registry.register('numeric_range', NumericRangeRule)
-    return registry
+    return DQRuleRegistry.with_defaults()
