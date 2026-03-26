@@ -230,7 +230,7 @@ class PipelineExecutor:
         output_df = getattr(step, "output_df", None) or source_id
 
         source = self._find_by_id(getattr(pipeline, "sources", []) or [], source_id, "source_id")
-        source_format = getattr(source, "format", None)
+        source_format = getattr(source, "format", None) or getattr(source, "source_type", None)
         spark = runtime.get("spark")
 
         if dry_run:
@@ -276,7 +276,7 @@ class PipelineExecutor:
             transformation = self.transformation_registry.get(step_type)
             dataframe = transformation.apply(
                 df=input_df,
-                params=params,
+                step_config=step,
                 context={
                     "runtime": runtime,
                     "dataframes": dataframes,
@@ -356,7 +356,7 @@ class PipelineExecutor:
             raise ValueError(f"Write step '{getattr(step, 'step_id', '?')}' references missing dataframe '{input_df_name}'")
 
         target = self._find_by_id(getattr(pipeline, "targets", []) or [], target_id, "target_id")
-        target_format = getattr(target, "format", None)
+        target_format = getattr(target, "format", None) or getattr(target, "target_type", None)
         dataset = dataframes[input_df_name]
 
         if dry_run:
