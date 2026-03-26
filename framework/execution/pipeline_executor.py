@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from framework.audit.control_logger import ControlLogger
 from framework.audit.dq_audit_logger import DQAuditLogger
 from framework.audit.run_metadata import RunMetadataBuilder
+from framework.config.models import ExecutionBundle
 from framework.io.readers import ReaderContext, ReaderRegistry
 from framework.io.writers import WriterContext, WriterRegistry
 
@@ -20,13 +21,8 @@ class PipelineExecutor:
     """
     Generic config-driven pipeline executor.
 
-    Expected bundle shape (from config loader / merger layer):
-    {
-        "pipeline": <PipelineConfig>,
-        "environment": <EnvironmentConfig>,
-        "runtime": {...},
-        "effective_dq_rules": [...],
-    }
+    Expected input is framework.config.models.ExecutionBundle.
+    Legacy dictionary shape is still accepted for backwards compatibility.
 
     The executor is intentionally glue-code heavy and business-logic light.
     """
@@ -49,11 +45,13 @@ class PipelineExecutor:
         self.dq_audit_logger = dq_audit_logger or DQAuditLogger()
         self.run_metadata_builder = run_metadata_builder
 
-    def execute(self, execution_bundle: Dict[str, Any], dry_run: bool = False) -> Dict[str, Any]:
-        pipeline = execution_bundle["pipeline"]
-        environment = execution_bundle["environment"]
-        runtime = execution_bundle.get("runtime", {}) or {}
-        effective_dq_rules = execution_bundle.get("effective_dq_rules", []) or []
+    def execute(self, execution_bundle: Dict[str, Any] | ExecutionBundle, dry_run: bool = False) -> Dict[str, Any]:
+        bundle_dict = execution_bundle.model_dump(mode="python") if hasattr(execution_bundle, "model_dump") else execution_bundle
+
+        pipeline = self._get_bundle_value(execution_bundle, bundle_dict, "pipeline_config", "pipeline")
+        environment = self._get_bundle_value(execution_bundle, bundle_dict, "environment_config", "environment")
+        runtime = self._get_bundle_value(execution_bundle, bundle_dict, "resolved_runtime", "runtime") or {}
+        effective_dq_rules = self._get_bundle_value(execution_bundle, bundle_dict, "merged_dq_rules", "effective_dq_rules") or []
 
         pipeline_id = getattr(pipeline, "pipeline_id", "unknown_pipeline")
         env_name = getattr(environment, "environment", None) or getattr(environment, "name", "unknown_env")
@@ -380,6 +378,12 @@ class PipelineExecutor:
             "mode": getattr(target, "mode", None),
             "row_count": row_count,
         }
+
+    @staticmethod
+    def _get_bundle_value(bundle_obj: Any, bundle_dict: Dict[str, Any], typed_key: str, legacy_key: str) -> Any:
+        if hasattr(bundle_obj, typed_key):
+            return getattr(bundle_obj, typed_key)
+        return bundle_dict.get(typed_key, bundle_dict.get(legacy_key))
 
     @staticmethod
     def _find_by_id(items: List[Any], target_id: str, attribute: str) -> Any:

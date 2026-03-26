@@ -258,3 +258,27 @@ class RulePackConfig(BaseModel):
     rulepack_id: str
     version: int = Field(ge=1)
     rules: List[DQRuleConfig] = Field(default_factory=list)
+
+
+class LoadedConfigBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pipeline_config: PipelineConfig
+    environment_config: EnvironmentConfig
+    runtime_invocation: RuntimeInvocation
+    rulepacks: Dict[str, RulePackConfig] = Field(default_factory=dict)
+    runtime_overrides: Dict[str, Any] = Field(default_factory=dict)
+    resolved_pipeline_config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutionBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pipeline_config: PipelineConfig
+    environment_config: EnvironmentConfig
+    merged_pipeline_config: Dict[str, Any] = Field(default_factory=dict)
+    merged_dq_rules: List[DQRuleConfig] = Field(default_factory=list)
+    resolved_runtime: Dict[str, Any] = Field(default_factory=dict)
+    source_locations: Dict[str, str] = Field(default_factory=dict)
+    target_locations: Dict[str, str] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)

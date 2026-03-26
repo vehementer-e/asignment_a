@@ -51,10 +51,10 @@ def main(argv: list[str] | None = None) -> int:
         runtime_overrides=runtime_overrides,
     )
 
-    pipeline_cfg = loaded["pipeline"]
-    environment_cfg = loaded["environment"]
-    runtime_invocation = loaded["runtime_invocation"]
-    rulepacks = loaded["rulepacks"]
+    pipeline_cfg = loaded.pipeline_config
+    environment_cfg = loaded.environment_config
+    runtime_invocation = loaded.runtime_invocation
+    rulepacks = loaded.rulepacks
 
     validate_pipeline_semantics(
         pipeline_cfg,
@@ -70,12 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(merged_runtime, indent=2, default=str),
     )
 
-    bundle = build_execution_bundle(
-        pipeline=pipeline_cfg,
-        environment=environment_cfg,
-        runtime_invocation=runtime_invocation,
-        rulepacks=rulepacks,
-    )
+    bundle = build_execution_bundle(loaded)
 
     executor = PipelineExecutor()
     summary = executor.execute(bundle, dry_run=args.dry_run)

@@ -7,7 +7,13 @@ from typing import Any, Iterable, Mapping
 
 import yaml
 
-from .models import EnvironmentConfig, PipelineConfig, RulePackConfig, RuntimeInvocation
+from .models import (
+    EnvironmentConfig,
+    LoadedConfigBundle,
+    PipelineConfig,
+    RulePackConfig,
+    RuntimeInvocation,
+)
 from .validator import (
     ConfigValidationError,
     discover_rulepack_ids,
@@ -75,16 +81,9 @@ class ConfigLoader:
         environment: str,
         runtime_file: str | Path | None = None,
         runtime_overrides: Mapping[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> LoadedConfigBundle:
         """
-        Load a complete config bundle and return both typed and resolved representations.
-
-        Returns a dictionary with:
-            pipeline           -> typed PipelineConfig
-            environment        -> typed EnvironmentConfig
-            runtime_invocation -> typed RuntimeInvocation
-            rulepacks          -> dict[str, RulePackConfig]
-            resolved_pipeline  -> resolved pipeline dict with ${...} placeholders expanded
+        Load a complete config bundle and return a typed LoadedConfigBundle.
         """
         env_cfg = self.load_environment(environment)
         pipeline_cfg = self.load_pipeline(pipeline_id)
@@ -110,13 +109,14 @@ class ConfigLoader:
             runtime=runtime_invocation.runtime,
         )
 
-        return {
-            "pipeline": pipeline_cfg,
-            "environment": env_cfg,
-            "runtime_invocation": runtime_invocation,
-            "rulepacks": rulepacks,
-            "resolved_pipeline": resolved_pipeline,
-        }
+        return LoadedConfigBundle(
+            pipeline_config=pipeline_cfg,
+            environment_config=env_cfg,
+            runtime_invocation=runtime_invocation,
+            rulepacks=rulepacks,
+            runtime_overrides=dict(runtime_overrides or {}),
+            resolved_pipeline_config=resolved_pipeline,
+        )
 
     def _build_runtime_invocation(
         self,

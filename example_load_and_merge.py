@@ -16,16 +16,11 @@ if __name__ == "__main__":
         runtime_file=config_root / "runtime" / "example_runtime_params.yaml",
     )
 
-    execution_bundle = build_execution_bundle(
-        pipeline=bundle["pipeline"],
-        environment=bundle["environment"],
-        runtime_invocation=bundle["runtime_invocation"],
-        rulepacks=bundle["rulepacks"],
-    )
+    execution_bundle = build_execution_bundle(bundle)
 
     print("Effective runtime:")
-    pprint(merge_runtime_values(bundle["pipeline"], bundle["environment"], bundle["runtime_invocation"]))
+    pprint(merge_runtime_values(bundle.pipeline_config, bundle.environment_config, bundle.runtime_invocation))
     print("\nResolved target path:")
-    print(bundle["resolved_pipeline"]["targets"][0]["path"])
+    print(bundle.resolved_pipeline_config["targets"][0]["path"])
     print("\nEffective DQ rule ids:")
-    pprint([r["rule_id"] for r in execution_bundle["pipeline"]["dq"]["effective_rules"]])
+    pprint([r.rule_id for r in execution_bundle.merged_dq_rules])
