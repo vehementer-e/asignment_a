@@ -4,9 +4,9 @@ from framework.transformations.registry import TransformationRegistry
 from framework.transformations.base import TransformationContext
 
 def example(reader_source_cfg, target_cfg, step_cfg, spark):
-    readers = ReaderRegistry()
-    writers = WriterRegistry()
-    transformations = TransformationRegistry()
+    readers = ReaderRegistry.with_defaults()
+    writers = WriterRegistry.with_defaults()
+    transformations = TransformationRegistry.with_defaults()
 
     df = readers.read(reader_source_cfg, ReaderContext(spark=spark))
     datasets = {getattr(step_cfg, "input_df", "input_df"): df}

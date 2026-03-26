@@ -61,8 +61,13 @@ class DeltaReader(BaseReader):
 class ReaderRegistry:
     def __init__(self):
         self._readers: Dict[str, BaseReader] = {}
+
+    @classmethod
+    def with_defaults(cls) -> "ReaderRegistry":
+        registry = cls()
         for reader in (CsvReader(), JsonReader(), ParquetReader(), DeltaReader()):
-            self.register(reader)
+            registry.register(reader)
+        return registry
 
     def register(self, reader: BaseReader) -> None:
         self._readers[reader.format_name.lower()] = reader

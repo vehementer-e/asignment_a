@@ -57,8 +57,13 @@ class ConsoleWriter(BaseWriter):
 class WriterRegistry:
     def __init__(self):
         self._writers: Dict[str, BaseWriter] = {}
+
+    @classmethod
+    def with_defaults(cls) -> "WriterRegistry":
+        registry = cls()
         for writer in (DeltaWriter(), ParquetWriter(), ConsoleWriter()):
-            self.register(writer)
+            registry.register(writer)
+        return registry
 
     def register(self, writer: BaseWriter) -> None:
         self._writers[writer.format_name.lower()] = writer

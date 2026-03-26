@@ -11,7 +11,11 @@ from .sql_transform import SqlTransformTransformation
 class TransformationRegistry:
     def __init__(self):
         self._transformations = {}
-        for t in (
+
+    @classmethod
+    def with_defaults(cls) -> "TransformationRegistry":
+        registry = cls()
+        for transformation in (
             SelectColumnsTransformation(),
             RenameColumnsTransformation(),
             CastColumnsTransformation(),
@@ -21,7 +25,8 @@ class TransformationRegistry:
             DeduplicateTransformation(),
             SqlTransformTransformation(),
         ):
-            self.register(t)
+            registry.register(transformation)
+        return registry
 
     def register(self, transformation: BaseTransformation) -> None:
         self._transformations[transformation.transformation_type.lower()] = transformation

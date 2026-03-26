@@ -3,11 +3,11 @@
 This file is illustrative and intentionally lightweight.
 """
 
-from framework.dq import DataQualityExecutor, build_default_registry
+from framework.dq import DataQualityExecutor, DQRuleRegistry
 
 
 def build_executor() -> DataQualityExecutor:
-    return DataQualityExecutor(registry=build_default_registry())
+    return DataQualityExecutor(registry=DQRuleRegistry.with_defaults())
 
 
 if __name__ == '__main__':
