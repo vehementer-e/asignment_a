@@ -234,7 +234,7 @@ class ControlTablesConfig(BaseModel):
 class EnvironmentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    environment: Literal["dev", "test", "prod"]
+    environment: Literal["local", "dev", "test", "prod"]
     cloud: Literal["azure"]
     databricks: DatabricksConfig
     storage: StorageConfig
@@ -248,7 +248,7 @@ class RuntimeInvocation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pipeline_id: str
-    environment: Literal["dev", "test", "prod"]
+    environment: Literal["local", "dev", "test", "prod"]
     runtime: Dict[str, Any] = Field(default_factory=dict)
 
 
