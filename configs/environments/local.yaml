@@ -1,0 +1,29 @@
+environment: local
+cloud: local
+databricks:
+  workspace_url: local
+  job_cluster_policy: local
+  default_catalog: local
+  default_schema: risk
+  checkpoint_root: ./tmp/checkpoints
+storage:
+  landing_root: ./sample_data/raw
+  bronze_root: ./tmp/bronze
+  silver_root: ./tmp/silver
+  gold_root: ./tmp/gold
+  audit_root: ./tmp/audit
+control_tables:
+  catalog: local
+  schema: control
+  run_control_table: etl_run_control
+  step_control_table: etl_step_control
+  dq_results_table: etl_dq_results
+secrets: {}
+runtime_defaults:
+  write_mode: overwrite
+  fail_fast: true
+  log_level: INFO
+feature_flags:
+  enable_sql_templates: true
+  enable_step_lineage: true
+  enable_dq_sampling: true

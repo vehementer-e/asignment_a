@@ -1,0 +1,122 @@
+pipeline_id: credit_risk_mart_local
+version: 1
+owner: data-platform
+layer: gold
+description: Build a gold risk mart by combining curated clients and credits.
+engine: pyspark
+schedule: 45 6 * * *
+runtime_parameters:
+- name: business_date
+  type: date
+  required: true
+- name: run_id
+  type: string
+  required: true
+sources:
+- source_id: clients_silver
+  source_type: delta
+  path: ${storage.silver_root}/risk/clients_silver
+  alias: clients
+- source_id: credits_silver
+  source_type: delta
+  path: ${storage.silver_root}/risk/credits_silver
+  alias: credits
+- source_id: market_info_raw
+  source_type: json
+  path: ${storage.landing_root}/market_info/
+  options:
+    multiLine: true
+  alias: market
+targets:
+- target_id: credit_risk_gold
+  target_type: delta
+  mode: overwrite
+  catalog: ${databricks.default_catalog}
+  schema: risk
+  table: credit_risk_gold
+  path: ${storage.gold_root}/risk/credit_risk_gold
+steps:
+- step_id: read_clients
+  step_type: read
+  source_id: clients_silver
+  output_df: clients_df
+- step_id: read_credits
+  step_type: read
+  source_id: credits_silver
+  output_df: credits_df
+- step_id: read_market
+  step_type: read
+  source_id: market_info_raw
+  output_df: market_df
+- step_id: prepare_market
+  step_type: transformation
+  transformation: select_columns
+  input_df: market_df
+  output_df: market_prepared_df
+  params:
+    columns:
+    - country_code
+    - market_rate
+    - market_snapshot_date
+- step_id: join_clients_credits
+  step_type: transformation
+  transformation: join
+  input_df: credits_df
+  right_df: clients_df
+  output_df: credits_clients_df
+  params:
+    join_type: left
+    join_condition:
+    - left: client_id
+      right: client_id
+- step_id: join_market
+  step_type: transformation
+  transformation: join
+  input_df: credits_clients_df
+  right_df: market_prepared_df
+  output_df: risk_base_df
+  params:
+    join_type: left
+    join_condition:
+    - left: country_code
+      right: country_code
+- step_id: derive_risk_metrics
+  step_type: transformation
+  transformation: derive_columns
+  input_df: risk_base_df
+  output_df: risk_mart_df
+  params:
+    expressions:
+      balance_to_payment_ratio: case when monthly_payment > 0 then outstanding_balance
+        / monthly_payment else null end
+      high_balance_flag: case when outstanding_balance >= 100000 then true else false
+        end
+      business_date: to_date('{{ runtime.business_date }}')
+      ingestion_ts: current_timestamp()
+dq:
+  apply_to: risk_mart_df
+  include_rulepacks:
+  - common_validations
+  rules:
+  - rule_id: client_fk_present
+    rule_type: not_null
+    params:
+      columns:
+      - client_id
+    severity: fail
+  - rule_id: credit_fk_present
+    rule_type: not_null
+    params:
+      columns:
+      - credit_id
+    severity: fail
+  - rule_id: market_rate_reasonable
+    rule_type: numeric_range
+    params:
+      column: market_rate
+      min_value: 0
+      max_value: 100
+    severity: warn
+write:
+  input_df: risk_mart_df
+  target_id: credit_risk_gold

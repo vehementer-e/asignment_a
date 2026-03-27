@@ -1,0 +1,52 @@
+"""
+Auto-generated Airflow DAG for pipeline: {{ pipeline_id }}
+Environment: {{ environment }}
+Generated from config-driven template.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+
+from airflow import DAG
+from airflow.providers.databricks.operators.databricks import DatabricksSubmitRunOperator
+
+default_args = {
+    "owner": "{{ owner }}",
+    "depends_on_past": False,
+    "email_on_failure": False,
+    "email_on_retry": False,
+    "retries": {{ retries }},
+    "retry_delay": timedelta(minutes={{ retry_delay_minutes }}),
+}
+
+dag = DAG(
+    dag_id="{{ dag_id }}",
+    description="{{ description }}",
+    default_args=default_args,
+    start_date=datetime({{ start_year }}, {{ start_month }}, {{ start_day }}),
+    schedule="{{ schedule }}",
+    catchup=False,
+    max_active_runs=1,
+    tags={{ tags }},
+)
+
+databricks_task = DatabricksSubmitRunOperator(
+    task_id="run_{{ pipeline_id }}",
+    databricks_conn_id="{{ databricks_conn_id }}",
+    existing_cluster_id="{{ existing_cluster_id }}",
+    notebook_task={
+        "notebook_path": "{{ notebook_path }}",
+        "base_parameters": {
+            "pipeline_id": "{{ pipeline_id }}",
+            "environment": "{{ environment }}",
+            "runtime_json": '{{ runtime_json }}',
+            "config_root": "{{ config_root }}",
+        },
+    },
+    libraries={{ libraries }},
+    timeout_seconds={{ timeout_seconds }},
+    dag=dag,
+)
+
+databricks_task
