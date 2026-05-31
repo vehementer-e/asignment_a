@@ -235,7 +235,7 @@ class EnvironmentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     environment: Literal["local", "dev", "test", "prod"]
-    cloud: Literal["azure"]
+    cloud: Literal["local", "azure"]
     databricks: DatabricksConfig
     storage: StorageConfig
     control_tables: ControlTablesConfig
