@@ -1,0 +1,22 @@
+[
+  {
+    "country_code": "NL",
+    "market_rate": 3.1,
+    "market_snapshot_date": "2026-03-24"
+  },
+  {
+    "country_code": "DE",
+    "market_rate": 2.8,
+    "market_snapshot_date": "2026-03-24"
+  },
+  {
+    "country_code": "FR",
+    "market_rate": 3.4,
+    "market_snapshot_date": "2026-03-24"
+  },
+  {
+    "country_code": "BE",
+    "market_rate": 2.9,
+    "market_snapshot_date": "2026-03-24"
+  }
+]

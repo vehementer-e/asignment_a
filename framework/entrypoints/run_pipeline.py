@@ -18,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config-root", default="configs", help="Root directory of config files")
     parser.add_argument("--pipeline-id", required=True, help="Pipeline identifier, e.g. clients_curated")
-    parser.add_argument("--environment", required=True, choices=["dev", "test", "prod"])
+    parser.add_argument("--environment", required=True, choices=["local", "dev", "test", "prod"])
     parser.add_argument("--runtime-file", help="Path to a runtime invocation yaml/json file")
     parser.add_argument(
         "--runtime-json",

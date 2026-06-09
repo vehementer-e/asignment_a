@@ -1,0 +1,16 @@
+...                                                                      [100%]
+=============================== warnings summary ===============================
+framework/config/models.py:69
+  /Users/patrick/Downloads/asignment_a/framework/config/models.py:69: UserWarning: Field name "schema" in "SourceConfig" shadows an attribute in parent "BaseModel"
+    class SourceConfig(BaseModel):
+
+framework/config/models.py:96
+  /Users/patrick/Downloads/asignment_a/framework/config/models.py:96: UserWarning: Field name "schema" in "TargetConfig" shadows an attribute in parent "BaseModel"
+    class TargetConfig(BaseModel):
+
+framework/config/models.py:224
+  /Users/patrick/Downloads/asignment_a/framework/config/models.py:224: UserWarning: Field name "schema" in "ControlTablesConfig" shadows an attribute in parent "BaseModel"
+    class ControlTablesConfig(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3 passed, 3 warnings in 0.12s

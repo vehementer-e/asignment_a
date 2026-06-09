@@ -1,0 +1,6 @@
+CreditID,ClientID,CreditStatus,OutstandingBalance,MonthlyPayment,OriginationDate
+CR001,C001,active,12500.00,320.00,2022-01-10
+CR002,C002,active,98500.50,1250.00,2021-06-18
+CR003,C003,delinquent,158000.00,0.00,2020-03-05
+CR004,C004,closed,0.00,0.00,2019-07-22
+CR002,C002,active,98500.50,1250.00,2021-06-18

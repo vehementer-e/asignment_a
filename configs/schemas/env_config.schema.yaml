@@ -10,7 +10,7 @@ required:
 properties:
   environment:
     type: string
-    enum: [dev, test, prod]
+    enum: [local, dev, test, prod]
   cloud:
     type: string
     enum: [azure]
